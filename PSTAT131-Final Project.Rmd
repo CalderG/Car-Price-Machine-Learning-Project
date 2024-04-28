@@ -1,0 +1,6 @@
+---
+title: "PSTAT131-Final Project"
+author: "Calder Glass"
+date: "2024-04-28"
+output: html_document
+---
