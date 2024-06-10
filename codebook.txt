@@ -1,0 +1,32 @@
+X - Index of the vehicle in the dataset
+
+price - The price of the vehicle on the auction
+
+brand - The brand of the vehicle on the auction (ex: a Toyota car)
+
+model - The model of the brand of the vehicle on the auction (ex: Toyota Prius)
+
+year - The registration year for the vehicle
+
+color - The color of the vehicle
+
+mileage - How many miles the vehicle has traveled
+
+vin - The iD for a vehicle; 17 character string combination of letters and numbers
+
+title_status - Binary classification variable; either clean (alternative fuels from gas)
+or salvage (vehicle has suffered past damage and thus has little value)
+
+lot - The iD number for a vehicle that belongs to a given quantity; for instance there would be
+a lot number for a specific batch of Priuses
+
+state - The US state where the car is available to be purchased
+
+country - The country where the car is available to be purchased
+
+condition - Time left on the auction to bid for the vehicle
+
+
+
+
+

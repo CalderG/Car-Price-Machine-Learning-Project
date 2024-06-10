@@ -1,0 +1,541 @@
+---
+title: "PSTAT131-Final Project - North American Car Prices"
+author: "Calder Glass"
+date: "2024-04-28"
+output:
+  prettydoc::html_pretty:
+    theme: leonids
+    toc: true
+  pdf_document:
+  html_document: 
+    keep_md: true
+  html_notebook:
+    toc: true
+    toc_float: true
+    code_folding: show
+---
+
+![](reportvehicle.png){width="196"}
+
+# Introduction
+
+The data that is to be analyzed in this report comes from an auction site. Auctions for vehicles are posted everyday and last for several days until there is a highest bidder when the time is up. The value of these vehicles can vary depending on their age, general state (clean vs salvage/damaged), mileage, and other variables present in this dataset. This project will intend to find the most statistically significant predictors for the price of a vehicle in the auction.
+
+The goal of this project is to predict the prices of vehicles in auctions on <https://www.auctionexport.com/> based on different aspects of a vehicle, such as the brand, model, year, status of the vehicle, mileage, etc. These relationships necessitate regression models, and thus Linear Regression, Elastic-Net Regression, K-Nearest Neighbor, and Random Forest will be applied to the dataset in order to see which model yields the lowest mean squared error.
+
+For more information on the variables in the dataset, a codebook is provided.
+
+## Data Citation
+
+The dataset, "USA_cars_datasets.csv", was found from the following Kaggle dataset link: <https://www.kaggle.com/datasets/doaaalsenani/usa-cers-dataset/data>
+
+This dataset is ultimately the collection of vehicles from the following auction site: <https://www.auctionexport.com/>
+
+# Exploratory Data Analysis
+
+## Loading Data
+
+Loading the necessary packages.
+
+```{r loadingpackages, results = 'hide', message=FALSE}
+library(tidymodels)
+library(tidyverse)
+library(ggthemes)
+library(ggplot2)
+library(visdat)
+library(corrplot)
+library(parsnip)
+library(tune)
+tidymodels_prefer()
+set.seed(982)
+```
+
+Loading the dataset and checking it out initially.
+
+```{r reading in cars, results = 'hide'}
+NA_cars <- read.csv("USA_cars_datasets.csv")
+
+NA_cars
+
+```
+
+
+## Tidying Data
+
+```{r missing data check}
+vis_miss(NA_cars)
+
+```
+
+The dataset provided is very tidy in that there is no missing data, but there is one modification that will be made.
+
+The condition variable is a character variable, with inputs such as "2 days left" and "22 hours left" for the time left in the auction for the given vehicle. This results in the variable functioning as a categorical variable with certain times as certain categories, when in reality time is a quantitative variable. As a result, a function will be applied to the original "condition" column of the original data in order to create a copy with numeric values in terms of hours, that can then be substituted back into the original dataset.
+
+Additionally for the sake of formatting, the dataset will be converted to a tibble.
+
+```{r tidying data}
+
+# function to convert the character values for the condition variable
+# to numeric values
+condition_numeric <- function(original_condition)
+{
+  # get total number of observations from data set
+  obs_list <- length(original_condition)
+  # from 1st observation to last
+  for(obs_count in 1:obs_list)
+  {
+    if(grepl("hours",original_condition[obs_count]) == TRUE) 
+    {
+      #if the given observation mentions hours
+      numeric_hours = as.numeric(substr(original_condition[obs_count], 0, 2))
+    } else if(grepl("minute", original_condition[obs_count]) == TRUE)
+    { 
+      #if the given observation mentions minutes
+      numeric_hours = (as.numeric(substr(original_condition[obs_count], 0, 2))) / 60
+    } else if(grepl("Expired", original_condition[obs_count]) == TRUE)
+    {
+      #if the observation states that the auction time expired
+      numeric_hours = 0
+    } else
+    {
+      # if the given observation mentions days, then convert it to hours
+      numeric_hours = (as.numeric(substr(original_condition[obs_count], 0, 2))) * 24
+    }
+    original_condition[obs_count] = numeric_hours
+    
+  }
+  # convert to numeric because the first time it's just a string
+  original_condition <- as.numeric(original_condition)
+  # return the column
+  return(original_condition)
+}
+
+new_condition <- condition_numeric(NA_cars$condition)
+
+# convert dataset to a tibble for ease of use
+
+as_tibble(NA_cars)
+
+NA_cars <- NA_cars %>%
+  mutate(condition = ifelse(is.na(new_condition), 0, new_condition))
+
+options(max.print=100)
+NA_cars$condition
+
+```
+
+Now the condition column has been updated to be numeric instead of character.
+
+## Visualization of Data
+
+The first step to begin towards developing the model is to determine which predictor variables are most statistically significant towards predicting the price of a vehicle in the auction.
+
+The most significant predictors can be found by visualization with respect to the price variable, such as through a correlation matrix or a boxplot. The categorical variables include "title_status", "country", "state", "brand", & "color" will each be visualized with a boxplot.
+
+There are two categorical variables that are noticeably absent in this plan . . .
+
+```{r excluding vin}
+NA_cars <- NA_cars %>%
+  select(!c(vin, model))
+
+NA_cars
+```
+
+The variable "vin" was excluded because each string is random to where treating the variable as a factor yields 2495 levels. This means that almost every value is unique and thus there is likely to be no relationship between the variable and price. Additionally, due to there being almost as many levels as observations, it would be impossible to visualize the labels for every possible vin number.
+
+The variable "model" was excluded for a variety of reasons. First, there are so many different vehicle models in the dataset to where the labels overlap & would make it difficult to distinguish which boxplot belonged to which vehicle model. Second, the model of a vehicle is often shared by multiple brands. Take for example the "door" vehicle model. Both Ford and GMC sell vehicles with this model. Additionally, these brands also sell vehicles of different models, such as Ford's "MPV" and GMC's "MPV".
+
+This adds even more questions. For instance, should Ford's MPV be compared with GMC's MPV? Or should Ford's "door" model be compared to its "mpv" model? Keep in mind that the goal of this report is to solely examine the relationship between price and its predictors, **not** comparing the relationships of price between one brand's model versus another brand's model of vehicle, etc. In short, excluding the "model" variable removes unnecessary complexity in the report.
+
+```{r visualization of data}
+# boxplots for each categorical variable
+
+# boxplot for the relationship between the status of the vehicle (clean vs damaged) & price
+ggplot(NA_cars) + geom_boxplot(aes(x = title_status, y = price, fill = title_status)) + labs(x = "Status of the Vehicle (Clean vs Damaged Value)", y = "Price in dollars ($)", title = "Boxplot of Vehicle Status versus Vehicle Price")
+
+# boxplot for the relationship between the country for purchase of the vehicle & price
+ggplot(NA_cars) + geom_boxplot(aes(x = country, y = price, fill = country)) + labs(x = "Country to purchase the Vehicle", y = "Price in dollars ($)", title = "Boxplot of Country of Vehicle versus Vehicle Price")
+
+# boxplot for the relationship between the brand of the vehicle & the price
+ggplot(NA_cars) + geom_boxplot(aes(x = price, y = fct_rev(brand), fill = brand)) + labs(x = "Brand of the Vehicle", y = "Price in dollars ($)", title = "Boxplot of Vehicle Brand versus Vehicle Price")
+
+# boxplot for the relationship between the color of the vehicle & the price
+ggplot(NA_cars) + geom_boxplot(aes(x = price, y = fct_rev(color))) + labs(x = "Color of the Vehicle", y = "Price in dollars ($)", title = "Boxplot of Vehicle Color versus Vehicle Price")
+
+# boxplot for the relationship between the state of origin of the vehicle & price
+
+# Because the US state names can be long and the labels can overlap, they will be recoded to two letter abbreviations and done in a separate chunk with a modified width
+
+NA_cars <- NA_cars %>%
+  mutate(state = state.abb[match(NA_cars$state, tolower(state.name))])
+```
+
+```{r state origin of vehicle plot, fig.width= 12}
+ggplot(NA_cars) + geom_boxplot(aes(x = state, y = price, fill = state)) + labs(x = "Origin State of the Vehicle", y = "Price in dollars ($)", title = "Boxplot of US State of Vehicle versus Vehicle Price")
+```
+
+The *numeric* predictors: "year", "mileage", "lot", and "condition" will be visualized with a correlation matrix.
+
+```{r visualization of numeric predictors}
+NA_cars %>%
+  # only select the numeric variables and ignore the X variable, which is just an index variable
+  select(where(is.numeric) & !X) %>%
+  #keep(!is.na) %>%
+  cor()%>%
+  corrplot(type = 'lower', diag = FALSE, method = 'color')
+
+```
+
+### Visualization Remarks
+
+**Boxplot of Vehicle Status vs Price:** While there are far fewer vehicles with a "salvage insurance" versus those with a "clean" status, there is enough data in 163 observations of such vehicles to garner some insights. The median and quartiles of prices for vehicles with the "salvage insurance" status are much closer to \$0 dollars than the same statistics of prices for vehicles with the "clean status", which lie around \$20000 dollars.
+
+**Boxplot of Country vs Price:** There are not enough observations of vehicles from Canada (n = 7) to make any conclusion about a relationship existing between the country to purchase the vehicle from and the price of the vehicle.
+
+**Boxplot of Vehicle Brand vs Price:** Some of the boxplots for given brands have medians centered around \$10000, others are centered around \$20000, and a few are centered around \$30000. This predictor should be included in the eventual model because the spreads of the prices for each brand are not similar enough to where there isn't a possible relationship between brand and price.
+
+**Boxplot of Color vs Price:** Some of the colors have median prices centered around \$20000 while others have median prices centered around \$17000. Some colors also have far higher median prices at around \$25000. Some colors have a fair number of prices around \$60000 to \$80000.
+
+**Boxplot of US State versus Price:** The medians and quartiles of the boxplots for each US state are around the same, so there is no significant statistical relationship between the US state and the price of the vehicle.
+
+**Correlation Matrix of Numeric Predictors & Price:** The response variable, price, has zero correlation with the time condition of the vehicle, slight positive correlation with the lot number of the vehicle, slight/moderate negative correlation with mileage, and moderate positive correlation with the year of the vehicle.
+
+The year of the vehicle has a moderate/strong negative correlation with mileage, a slightly positive correlation with the lot number of the vehicle, and zero correlation with the time condition of the vehicle.
+
+The mileage of the vehicle has a slightly negative correlation with the lot number of the vehicle and very slight negative correlation with the time condition of the vehicle.
+
+The lot number has a slight to moderate correlation with the time condition of the vehicle.
+
+**Additional Dropped Variables:**
+
+From these visualizations, the following additional predictors will be dropped from the dataset.
+
+The "country" predictor - there are only 7 observations of vehicles on auctions from Canada. This is not enough data to argue that there is a relationship between price and country that is worth considering in the overall predictive model for price.
+
+The "state" predictor - the spread of the prices for each US state are similar enough statistically for majority of the states that there does not appear to be a relationship between the US state the vehicle came from and the price of the vehicle.
+
+The index predictor "X" - unnecessary as there are no outliers or data points that need to be modified or dropped. The goal of the project is to look at the data as a whole rather than individual data points.
+
+```{r drop predictors}
+NA_cars <- NA_cars %>%
+  select(!c(country, state, X))
+
+NA_cars
+
+```
+
+This is the final state of the dataset before building the model.
+
+# Preparation before Model Building
+
+## Data Proportioning
+
+The data will be proportioned into 75% training and 25% testing, stratifying on the response variable: price.
+
+This is done so that the models can be built/fitted on the training data. Once the models are built/fitted on the training data, the best model will be applied to the testing data.
+
+```{r proportions}
+NA_cars_stratified <- initial_split(NA_cars, prop = 0.75, strata = price)
+
+NA_cars_training <- training(NA_cars_stratified)
+
+NA_cars_testing <- testing(NA_cars_stratified)
+```
+
+## Recipe Building
+
+There will be a recipe for the data that is used for every model in the report. In this recipe, standardization/normalization of the numeric/continuous predictors will occur in order to better compare the effects of different predictors in the dataset.
+
+The recipe is prepped to make sure there are no errors.
+
+Additionally, categorical predictors in the dataset will be dummy encoded because they are not continuous.
+
+```{r recipebuilding}
+library(kableExtra)
+NA_cars_recipe <- recipe(price ~ ., data = NA_cars_training) %>%
+  step_novel(all_nominal_predictors()) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_nzv(all_predictors()) %>%
+  step_normalize(all_predictors())
+
+prep(NA_cars_recipe) %>%
+  bake(new_data = NA_cars_training) %>%
+  kable() %>% 
+  kable_styling(full_width = F) %>% 
+  scroll_box(width = "100%", height = "200px")
+
+```
+
+## Pre-Assessment
+
+To better assess price predictions and avoid overfitting data, the vehicle dataset will be resampled with K-Fold Cross Validation with $20$ folds to compensate for the many vehicle color levels.
+
+K Fold Cross Validation in practice trains the given model on $k - 1$ folds of the training data and then tests it on the remaining fold, which is also known as the validation set. This process is repeated for $k$ times so that by the end, every fold will have been used as a validation set for a given test.
+
+The performance metric for regression, root mean square error (RMSE), will be the average of the given model on each validation set. This is more effective in reducing variance than the RMSE being based on only one validation set because there is more data involved, so the variance decreases.
+
+The root mean square error is the square root of the mean square error, which is the average of the difference between the observed outcome values and the predicted outcome values.
+
+Thus, a lower root mean square error implies that the predicted outcome values are close to the observed outcome values, which in the context of vehicle prices would mean that the predicted prices are close to the actual prices as a result of predictors.
+
+The folds are stratified so that each fold is representative of the original data proportions.
+
+```{r folding}
+NA_cars_folds <- vfold_cv(NA_cars_training, v = 20, strata = price)
+
+```
+
+# Model Building
+
+The first model will be the regular linear regression model with no penalty or mixture applied. This model is trying to find estimates of the partial regression coefficients that result in a model that best fits the data.
+
+```{r firstmodel}
+lm_model <- linear_reg() %>% 
+  set_engine("lm")
+
+lm_wflow <- workflow() %>% 
+  add_model(lm_model) %>% 
+  add_recipe(NA_cars_recipe)
+
+```
+
+The second model will be a K Nearest Neighbors model. In order to find the best value of neighbors, hyper parameter tuning will be assigned to the neighbors parameter.
+
+This model makes predictions by looking at the $k$ closest points to the given predicted point in order to predict the output. In the context of vehicle prices, it would look at the $k$ closest data points of vehicle auctions and use those points to predict the price of a new data point.
+
+The model will be tuned with $10$ levels of $k$ from $k = 1$ to $k = 10$. This is done through the grid_regular() function.
+
+```{r secondmodel}
+library(kknn)
+library(dials)
+# KNN
+knn_model <- nearest_neighbor(neighbors = tune()) %>% 
+  set_engine("kknn") %>% 
+  set_mode("regression")
+
+knn_wflow <- workflow() %>% 
+  add_model(knn_model) %>% 
+  add_recipe(NA_cars_recipe)
+
+neighbors_grid <- grid_regular(neighbors(range = c(1, 10)), levels = 10)
+
+
+```
+
+The third model will be Elastic Net Regression, which is a combination of lasso and ridge regression. This means that the regression coefficients are shrunk based on the Manhattan norm of the regression coefficients & the Euclidean norm of the regression coefficients. This shrinkage is dependent on the penalty and mixture parameters.
+
+The Manhattan norm is used by Lasso Regression, it's the sum of the magnitude of every regression coefficient.
+
+The Euclidean norm is used by Ridge Regression, it's the sum of the square of every regression coefficient.
+
+This model is tested because it can help reduce overfitting by shrinking less significant predictors, which can lead to stronger interpretability of results.
+
+Both the penalty and mixture parameters are tuned based on a grid where there are $10$ levels of the mixture parameter, each level evenly spaced from each other from $0$ to $1$. For each level of the mixture, there are $10$ levels of penalty, where each level is also evenly spaced from $0$ to $1$.
+
+```{r thirdmodel}
+elastic_model <- linear_reg(mixture = tune(), 
+                              penalty = tune()) %>%
+  set_mode("regression") %>%
+  set_engine("glmnet")
+
+elastic_workflow <- workflow() %>% 
+  add_recipe(NA_cars_recipe) %>% 
+  add_model(elastic_model)
+
+elastic_grid <- grid_regular(penalty(range = c(0, 1),
+                                     trans = identity_trans()),
+                        mixture(range = c(0, 1)),
+                             levels = 10)
+
+```
+
+The fourth model will be Random Forest. This model takes data and divides it into separate nodes based on a random selection of predictors. The process continues into a minimal node size, in which there are deemed to be too few observations to divide into further nodes. At that point, these nodes are recognized as leaf nodes. The model itself uses 3 parameters:
+
+The *min_n* parameter is the minimum number of data points needed in a node for splitting. So if $\text{min_n} = 10$, then a node that has only 9 data points can't be split any further, so it would be a leaf node/mean predicted price in the context of this model.
+
+The *trees* parameter is the number of trees that are to be combined to create the ensemble/random forest. If $\text{trees} = 3$, then there will be $3$ trees in the ensemble, or it can be thought of as a forest of $3$ trees.
+
+The *mtry* parameter is a number of randomly selected variables that are used during each split for each tree. Instead of using all the variables to find the split point that reduces node impurity/maintains node homogeneity, it will use a random selection of all the variables to find the split point. This results in a reduction of overfitting because it's not trying to account for every single variable in its selections.
+
+The impurity parameter for "importance" means that the predictors are ranked in importance by how much they decreased the impurity in the nodes. To reduce impurity means to maintain node homogeneity, where the data points in the node are as similar as possible. This parameter is also useful because if this model is the best of the 4 models, which will be determined later in **Best Model Selection,** then it will be possible to view the importance of the different predictors as a bar chart.
+
+A minimum node size range of $25$ to $40$ data points was chosen because of the large number of observations in the training data - $1872$ observations.
+
+The mtry range is from $1$ to $7$ because there are 7 predictors in the data set.
+
+The trees range of $200$ to $600$ is kind of arbitrary and was based off of previous labs and HW that used similar ranges for the number of trees in the ensemble.
+
+```{r fourthmodel}
+rf_model <- rand_forest(mtry = tune(), 
+                           trees = tune(), 
+                           min_n = tune()) %>%
+  set_engine("ranger", importance = "impurity") %>% 
+  set_mode("regression")
+
+rf_wflow <- workflow() %>% 
+  add_model(rf_model) %>% 
+  add_recipe(NA_cars_recipe)
+
+rf_grid <- grid_regular(mtry(range = c(1, 7)), 
+                        trees(range = c(200, 600)),
+                        min_n(range = c(25, 40)),
+                        levels = 7)
+
+
+```
+
+## Fitting the Models
+
+I am going to fit the Linear Regression, K-Nearest Neighbors, Elastic Net Regression, and Random Forest models to the data
+
+```{r fitting, eval = FALSE}
+# Linear Regression Model with no hyper parameter
+linear_reg_fit <- fit_resamples(lm_wflow, resamples = NA_cars_folds, NA_cars_recipe)
+
+# Elastic Net Regression Model
+elastic_fit <- tune_grid(
+  elastic_workflow,
+  resamples = NA_cars_folds,
+  grid = elastic_grid
+)
+
+# K-Nearest Neighbors Model
+
+knn_fit <- tune_grid(knn_wflow, resamples = NA_cars_folds, grid = neighbors_grid)
+
+# Random Forest Model
+
+rf_fit <- tune_grid(rf_wflow, 
+  resamples = NA_cars_folds, 
+  grid = rf_grid
+)
+
+```
+
+The fitting process takes a while, so while the code can be seen here, it's not evaluated during the knitting process. The results of the fitting process are saved to separate files, which also isn't evaluated after the first attempt.
+
+```{r savedfiles, eval = FALSE}
+save(rf_fit, file = "rf_fit.rda")
+save(elastic_fit, file = "elastic_fit.rda")
+save(knn_fit, file = "knn_fit.rda")
+save(linear_reg_fit, file = "linear_reg_fit.rda")
+```
+
+## Best Model Selection
+
+In order to select the best model to later use on the testing data, the results on the testing data need to be viewed and interpreted first.
+
+To do this, the files for the training results for each model will be loaded.
+
+```{r loading, warning = FALSE, echo = FALSE}
+load("rf_fit.rda")
+load("elastic_fit.rda")
+load("knn_fit.rda")
+load("linear_reg_fit.rda")
+
+autoplot(rf_fit, metric = 'rmse') + theme_minimal()
+autoplot(elastic_fit, metric = 'rmse') + theme_minimal()
+autoplot(knn_fit, metric = 'rmse') + theme_minimal()
+
+lm_rmse <- collect_metrics(linear_reg_fit) %>%
+  slice(1)
+
+lm_rmse
+
+```
+
+### Observations
+
+Looking at the Random Forest model, the root mean squared error appears to have no negligible difference when the minimal node size &/or number of trees in the ensemble increase. The lowest root mean squared error for all of the graphs appears to be around $6$ randomly selected predictors.
+
+Looking at the Elastic Net Regression model, the root mean squared error appears to remain constant as the amount of regularization/mixture increases. Of the $10$ different levels of penalty, a penalty of $0$ appears to produce the least root mean squared error.
+
+Looking at the K-Nearest Neighbors Model, the root mean squared error is lowest when $k=10$ neighbors. This is the preferred $k$ value to choose for the root mean squared error because while the bias is high, the testing error will be less due to there being less variance since it's considering more observations/neighbors.
+
+Because there was no tuning involved for the linear regression, what's left is just the result of fitting the linear regression model to the testing data, which is a root mean squared error of $10021.73$ over the 20 folds.
+
+Now the **show_best** function will be used to find the model with the lowest root mean squared error for each of the models with hyper parameter tuning.
+
+```{r displayingbest}
+rf_best <- show_best(rf_fit, metric = "rmse") %>%
+  slice(1)
+
+
+knn_best <- show_best(knn_fit, metric = "rmse") %>%
+  slice(1)
+
+elastic_best <- show_best(elastic_fit, metric = "rmse") %>%
+  slice(1)
+
+model_comparison <- tibble(Model = c("Linear Regression", "Elastic Net Regression", "K-Nearest Neighbors", "Random Forest"), RMSE = c(lm_rmse$mean, elastic_best$mean, knn_best$mean, rf_best$mean))
+
+model_comparison
+
+```
+
+From these results, it can be seen that the random forest model was most successful in reducing the root mean squared error. More specifically, the exact parameter values that produced this error were:
+
+```{r exactvalues, echo = FALSE}
+rf_best
+
+```
+
+Thus, a random forest with $7$ randomly selected predictors, an ensemble of $533$ trees, and a minimal node size of $25$ observations produced the least root mean squared error.
+
+This will be the model to fit on the testing data.
+
+Additionally, the most important predictors in predicting the price of vehicles can also be found.
+
+```{r fittingtime, echo = FALSE}
+library(vip)
+final_rf_model <- finalize_workflow(rf_wflow, rf_best)
+final_rf_model<- fit(final_rf_model, NA_cars_training)
+
+final_rf_model %>% extract_fit_parsnip() %>%
+  vip() +
+  theme_minimal()
+
+```
+
+**Remarks:**
+
+Some of these predictors were expected in terms of importance: mileage & year are a huge factor in the prices of vehicles because vehicles depreciate in price as they get older, and as they get older they tend to have a higher mileage.
+
+One surprise is the lot number. So many vehicles in the dataset had different prices, conditions, etc. under seemingly the same lot number. However upon further investigation into the original .csv file, many of these lot numbers were truncated to "1.67E+08" or "1.68E+08" in the column, but could be fully expanded to unique numbers once a single entry was selected.
+
+The time condition of the car (time remaining in the auction) and the clean or salvage status were also fairly important predictors, but the second predictor was slightly lower in importance than upon initial expectation as most vehicles that had an insurance status of "salvage" tended to have a price close to \$0.
+
+Perhaps the most surprising takeaway from the importance graph is that the brand of the car didn't play as much importance in the price of the vehicle. This is especially surprising considering there were some higher-end vehicle brands such as Mercedes and Cadillacs that featured in this dataset. It's possible, however, that most of the other vehicle brands present in the dataset were evenly matched in terms of price, thus reducing the importance of the brand predictor.
+
+# The Final Test
+
+Now that the model has been picked, it will be fitted against the testing data. A visualization of the predicted prices versus the actual prices will be provided as well.
+
+```{r testing, echo = FALSE}
+final_rf_model_test <- augment(final_rf_model, new_data = NA_cars_testing) 
+rmse(final_rf_model_test, truth = price, estimate = .pred)
+
+NA_cars_test_visual <- predict(final_rf_model, new_data = NA_cars_testing %>% select(-price))
+NA_cars_test_visual <- bind_cols(NA_cars_test_visual, NA_cars_testing %>% select(price))
+
+NA_cars_test_visual %>%
+  ggplot(aes(x = .pred, y = price)) +
+  geom_point(alpha = 0.4) +
+  geom_abline(lty = 2) +
+  labs(title = "Predicted Price vs Actual Price", x = "Predicted Price", y = "Actual Price")
+
+```
+
+# Conclusion
+
+It turned out that the best model for predicting the price of a vehicle in auction was the Random Forest model with $7$ randomly selected predictors, an ensemble of $533$ trees, and a minimal node size of $25$ observations. This model in the training environment performed substantially better than its contemporaries: the KNN model produced a root mean squared error of $9439$, the Linear Regression Model with $10022$, and the Elastic-Net Regression model with a surprisingly high $10017$. The last model in particular was a shock because the elastic-net model is a combination of lasso, which increases the bias to decrease the variance by a lot, and ridge takes the square of the partial regression coefficients in order to reduce the variance. That may reveal that the reduction of predictors prior to model building was effective, or that separate lasso and ridge regression models should also have been fitted to the training data to potentially yield a lower root mean squared error. 
+
+While the root mean squared error appears to be very high at $7981$, the graph of the predicted vs actual vehicle prices shows that the error wasn't inappropriate for the model. Most of the vehicle price points are spread uniformly around the predicted price line, which means that there is no pattern in the error to suggest that the model was inappropriate for the data.
+
+If this experiment was to be repeated, one modification might be to remove some of the vehicle entries whose prices could be considered influential points: this would include outliers or leverage points that affect the slope of the predicted regression. Removing those entries wouldn't have a major effect on the variance of the data as there are so many observations ($2499$). 
+
+During the Exploratory Data Analysis of the report, the model predictor was a conundrum that was ultimately left out of the dataset before splitting the data and building the recipe. After viewing the importance bar chart, the model predictor likely would have performed to a similar level of importance as the brand of the car, so its absence was closer to inconsequential then previously feared.
+
+A predictor that could have seen further exploration would've been the country predictor. It was dropped because there was so little data for Canadian vehicles in the auctions, but that level could've been upsampled with synthetic data to further examine the importance of the country of origin of the given vehicle on its price in the auction.
+
+![](reportvehicle.png){width="196"}
